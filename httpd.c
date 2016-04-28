@@ -36,7 +36,7 @@ static void sent_OK(int client);
 pthread_spinlock_t sem;
 pthread_spinlock_t mutex;
 std::queue<int> myqueue;
-#define MY_CPU_COUNT 6
+#define MY_CPU_COUNT 7
 #define IN_BUF_LEN 16*1024*1024
 
 pthread_t tid[MY_CPU_COUNT];          //identifikator vlakna
@@ -178,17 +178,32 @@ while(!terminate){
 
 		inflateEnd(&strm);
 		
-        velky_buffer[IN_BUF_LEN-strm.avail_out] = '\0';
-        char *string, *save = NULL;
+        	velky_buffer[IN_BUF_LEN-strm.avail_out] = '\0';
 
-	pthread_spin_lock(&sem);
-        string = strtok_r(velky_buffer,delimit,&save);
-        while (string != NULL) {		
-		slova.insert(std::string(string));		
-		string = strtok_r(NULL,delimit,&save);
-        }
-	pthread_spin_unlock(&sem);
-       
+		#define SLOVA 250
+        	char *string[SLOVA], *save = NULL;
+		int count=SLOVA;
+		int all= 0;
+		string[0] = strtok_r(velky_buffer,delimit,&save);
+		pthread_spin_lock(&sem);
+		slova.insert(std::string(string[0]));		
+        	pthread_spin_unlock(&sem);
+		while (!all){
+			for (int i=0;i<SLOVA;i++){
+				string[i] = strtok_r(NULL,delimit,&save);
+				if (string[i]==NULL){
+					count=i;
+					all=1;
+					break;
+				}	
+			}
+			pthread_spin_lock(&sem);
+			for (int i=0;i<count;i++){        		
+				slova.insert(std::string(string[i]));		
+        		}
+			pthread_spin_unlock(&sem);
+       		}	
+		//printf("za vkladanim\n");
 
 		sent_OK(client); /*pokud tohle neodeslu pred zavrenim, klient
 				si zahlasi :empty response: */
