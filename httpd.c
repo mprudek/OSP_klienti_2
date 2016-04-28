@@ -71,29 +71,15 @@ int parse_words(char * buf, int* first, int buf_size);
 pthread_spinlock_t sem;
 pthread_spinlock_t mutex;
 std::queue<int> myqueue;
-pthread_t tid1,tid2,tid3,tid4,tid5, tid_shared;          //identifikator vlakna
+#define CPU_COUNT 12
+pthread_t tid[CPU_COUNT];          //identifikator vlakna
 //pthread_mutex_t mutex;
-pthread_attr_t attr1, attr2, attr3, attr4, attr5;    //atributy vlakna
-cpu_set_t cpus1, cpus2, cpus3, cpus4, cpus5;
+pthread_attr_t attr[CPU_COUNT];    //atributy vlakna
+cpu_set_t cpus[CPU_COUNT];
 int get =0;
 
-char buffer_recv[4][32*1024*1024];
+char buffer_recv[CPU_COUNT][32*1024*1024];
 
-static void print_decomp(char * buf, int first, int decomprimed, int buf_size){
-	int i;
-	if (first+decomprimed<=buf_size){
-		for (i=first;i<first+decomprimed;i++){
-			printf("index=%d znak=%c\n",i,buf[i]);
-		}
-	}else{
-		for (i=first;i<buf_size;i++){
-			printf("index=%d znak=%c\n",i,buf[i]);
-		}
-		for (i=0;i<first+decomprimed-buf_size;i++){
-			printf("index=%d znak=%c\n",i,buf[i]);
-		}
-	}
-}
 
 /**********************************************************************/
 /* A request has caused a call to accept() on the server port to
@@ -250,7 +236,6 @@ while(!terminate){
 			len = PACKET < length ? PACKET : length; 
 			prijato=recv(client,data_buf,len,0);
 			length-=prijato;
-			//printf("prijato=%d, pozadovano=%d\n",prijato, len);
 
 			strm.avail_in = prijato; //pocet bajtu k dekompresi
 			strm.avail_out = 32*1024*1024-celkem;
@@ -259,18 +244,10 @@ while(!terminate){
 
 			/* updates next_in, avail_in, next_out, avail_out */	
 			pred_infl = strm.avail_out;
-			#ifdef DEBUG		
-			ret = inflate(&strm, Z_SYNC_FLUSH);
-			#else 
-			inflate(&strm, Z_SYNC_FLUSH);
-			#endif  
+
+			inflate(&strm, Z_SYNC_FLUSH); 
 			dekomprimovano = pred_infl-strm.avail_out;
 			
-//			for (i=0;i<dekomprimovano;i++){
-			//	printf("indx=%d, znk=%c\n",i,zlib_out[i]);
-//				decomp[index_decomp++]=zlib_out[i];
-//				index_decomp%=DECOMP_BUF_SIZE;	
-//			}
                         celkem += dekomprimovano;
 
 			
@@ -311,51 +288,22 @@ while(!terminate){
 		if (!strcmp(url,"/osp/myserver/count")){
 //			printf("cekam na vlakna\n");
 			get=1;
-			if (pthread_self()!=tid1) pthread_join(tid1, NULL);
-			if (pthread_self()!=tid2) pthread_join(tid2, NULL);
-			if (pthread_self()!=tid3) pthread_join(tid3, NULL);
-//			if (pthread_self()!=tid5) pthread_join(tid5, NULL);
-//			printf("slova=%d\n",hashset_num_items(set));
-//                        std::cout << slova.size() << "\n";
+			for (int ind=1;i<CPU_COUNT;i++){
+				if (pthread_self()!=tid[i]) pthread_join(tid[i], NULL);
+			}
 			sent_count(client,/* hashset_num_items(set)*/ slova.size());
-//			hashset_destroy(set);
 			slova.clear();
-//			set = hashset_create(TABLE);
-			
 			pthread_spin_lock(&mutex);			
 			get=0;
-			int one=0, two=0, three=0, five=0;
-//			std::cout << "ziju\n";
-//			if (pthread_self()==tid1){
-//				pthread_create(&tid_shared, &attr1,accept_request, &buffer_recv[0][0]);
-//				one =1;
-//			}else if (pthread_self()==tid2){
-//				two=1;				
-//				pthread_create(&tid_shared, &attr2,accept_request, &buffer_recv[1][0]);
-//			}else if (pthread_self()==tid3){
-//				three = 1;
-//				pthread_create(&tid_shared, &attr3,accept_request, &buffer_recv[2][0]);
-//			} /*else if (pthread_self()==tid5){
-//				five = 1;
-//				pthread_create(&tid_shared, &attr5,accept_request, &buffer_recv[3][0]);
-//			}*/
-//			std::cout << "ziju\n";
+			
+			/*TODO */
 			
 
-			/*if (!one)*/ pthread_create(&tid1, &attr1,accept_request, &buffer_recv[0][0]);
-
-			/*if (!two)*/ pthread_create(&tid2, &attr2,accept_request, &buffer_recv[1][0]);
-			/*if (!three)*/ pthread_create(&tid3, &attr3,accept_request, &buffer_recv[2][0]);
-
-			//pthread_create(&tid4, &attr,accept_request, (void *)0);
-//			if (!five)pthread_create(&tid5, &attr5,accept_request, &buffer_recv[3][0]);
+			for (int i=1;i<CPU_COUNT;i++){
+				pthread_create(&tid[i], &attr[i],accept_request, &buffer_recv[i][0]);
+			}			
 			pthread_spin_unlock(&mutex);			
-//			std::cout << "ziju\n";
-			
 			terminate = 1;
-//			if (set == NULL) {
-//				printf("failed to create hashset instance\n");
-//			}
 		}
  	}
 
@@ -370,27 +318,6 @@ while(!terminate){
 	continue;
 }
 
-}
-
-
-
-/**********************************************************************/
-/* Put the entire contents of a file out on a socket.  This function
- * is named after the UNIX "cat" command, because it might have been
- * easier just to do something like pipe, fork, and exec("cat").
- * Parameters: the client socket descriptor
- *             FILE pointer for the file to cat */
-/**********************************************************************/
-static void cat(int client, FILE *resource)
-{
- char buf[1024];
-
- fgets(buf, sizeof(buf), resource);
- while (!feof(resource))
- {
-  send(client, buf, strlen(buf), 0);
-  fgets(buf, sizeof(buf), resource);
- }
 }
 
 
@@ -557,55 +484,30 @@ int main(void){
  	struct sockaddr_in client_name;
  	int client_name_len = sizeof(client_name);
 
-//	sem_init(&sem, 0, 1); //thread-shared, init-value 1
 	pthread_spin_init(&sem, PTHREAD_PROCESS_PRIVATE);
-
 	pthread_spin_init(&mutex, PTHREAD_PROCESS_PRIVATE);
 	
  	server_sock = startup(&port);
  	printf("httpd running on port %d\n", port);
 
-	pthread_attr_init(&attr1);
-	pthread_attr_init(&attr2);
-	pthread_attr_init(&attr3);
-	pthread_attr_init(&attr4);
-	pthread_attr_init(&attr5);
+	for (int i=0;i<CPU_COUNT;i++){
+		pthread_attr_init(&attr[i]);
+	}
+	for (int i=0;i<CPU_COUNT;i++){
+		CPU_ZERO(&cpus[i]);
+		CPU_SET(i, &cpus[i]);
+	}
+	
+	pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpus[0]);
+	
+	for (int i=1;i<CPU_COUNT;i++){
+		pthread_attr_setaffinity_np(&attr[i], sizeof(cpu_set_t), &cpus[i]);
+	}
 
-	CPU_ZERO(&cpus1);
-	CPU_ZERO(&cpus2);
-	CPU_ZERO(&cpus3);
-	CPU_ZERO(&cpus4);
-	CPU_ZERO(&cpus5);
-	CPU_SET(0, &cpus1);
-	CPU_SET(1, &cpus2);
-	CPU_SET(2, &cpus3);
-	CPU_SET(3, &cpus4);
-	CPU_SET(4, &cpus5);
-
-	pthread_attr_setaffinity_np(&attr1, sizeof(cpu_set_t), &cpus1);
-	pthread_attr_setaffinity_np(&attr2, sizeof(cpu_set_t), &cpus2);
-	pthread_attr_setaffinity_np(&attr3, sizeof(cpu_set_t), &cpus3);
-	pthread_attr_setaffinity_np(&attr5, sizeof(cpu_set_t), &cpus5);
-	pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpus4);
-
-	//set = hashset_create(TABLE);
-	printf("1\n");
-//	pthread_attr_init(&attr);
-	printf("1\n");	
-	pthread_create(&tid1, &attr1,accept_request, &buffer_recv[0][0]);
-//	pthread_attr_init(&attr);
-	pthread_create(&tid2, &attr2,accept_request, &buffer_recv[1][0]);
-//	pthread_attr_init(&attr);
-	pthread_create(&tid3, &attr3,accept_request, &buffer_recv[2][0]);
-//	pthread_attr_init(&attr);
-//	pthread_create(&tid5, &attr5,accept_request, &buffer_recv[3][0]);	
-
-/*	if (set == NULL) {
-		printf("failed to create hashset instance\n");
-             	close(server_sock);
-		return 1;
-        }
-*/	
+	for (int i=1;i<CPU_COUNT;i++){
+		pthread_create(&tid[i], &attr[i],accept_request, &buffer_recv[i][0]);
+	}
+	
  	while (1){
   		client_sock = accept(server_sock,
                        (struct sockaddr *)&client_name,
@@ -614,125 +516,13 @@ int main(void){
    			error_die("accept");
 		}
 		pthread_spin_lock(&mutex);
-//		printf("pridavam spojeni=%d\n",client_sock);
 		myqueue.push(client_sock);
 		pthread_spin_unlock(&mutex);
-//		printf("spojeni pridano=%d\n",client_sock);
 		
  	}
 	pthread_spin_destroy(&mutex);
 	pthread_spin_destroy(&sem);
 
-//	sem_destroy(&sem);
  	close(server_sock);
 	return(0);
-}
-/**********************************************************************/
-/* Dekomprimuje obsah bufferu a ulozi ho do dalsihoi bufferu*/
-/**********************************************************************/
-static int inf(const void *src, int srcLen, void *dst, int dstLen) {
-    z_stream strm  = {0};
-    strm.total_in  = strm.avail_in  = srcLen;
-    strm.total_out = strm.avail_out = dstLen;
-    strm.next_in   = (Bytef *) src;
-    strm.next_out  = (Bytef *) dst;
-
-    strm.zalloc = Z_NULL;
-    strm.zfree  = Z_NULL;
-    strm.opaque = Z_NULL;
-
-    int err = -1;
-    int ret = -1;
-
-    err = inflateInit2(&strm, (15 + 32)); //15 window bits, and the +32 tells zlib to to detect if using gzip or zlib
-    if (err == Z_OK) {
-        err = inflate(&strm, Z_FINISH);
-        if (err == Z_STREAM_END) {
-            ret = strm.total_out;
-        }
-        else {
-             inflateEnd(&strm);
-             return err;
-        }
-    }
-    else {
-        inflateEnd(&strm);
-        return err;
-    }
-
-    inflateEnd(&strm);
-    return ret;
-}
-/********************************************************************/
-/* Vrati pocet smazanych znaku     */
-/********************************************************************/
-static int delete_word(char * buf, int first, int last, int buf_size){
-	int i;
-	int chars = 0;
-	if (first<=last){
-/*		for (i=first;i<=last;i++){
-			buf[i]='\0';
-			chars++;
-		} */
-		memset(&buf[first], '\0', last-first+1);
-	}else{
-/*		for (i=first;i<buf_size;i++){
-			buf[i]='\0';
-			chars++;
-		}
-		for (i=0;i<=last;i++){
-			buf[i]='\0';
-			chars++;
-		} */
-		memset(&buf[first], '\0', buf_size-first);
-		memset(buf, '\0', last+1);
-	}
-	return chars;
-}
-/**********************************************************************/
-/* Dekomprimuje obsah bufferu a ulozi ho do dalsihoi bufferu          */
-/* Vraci pozici prvniho bajtu prvniho nedokonceneho slova             */
-/* Za kazdym slovem ocekavame space character -> isspace(char c)      */
-/* Vraci, kolik znaku z fufferu bylo uvolneno                         */
-/**********************************************************************/
-static int parse_words(char * buf, int* first, int buf_size){
-	int main_index=*first; /*iterace pres bajty v bufferu*/
-	int word_index=0; /* itrace pres bajty v aktualnim sloce */
-	char word[126];
-	int chars = 0;
-pthread_spin_lock(&sem);
-	while(buf[main_index]!='\0'){
-		if (isspace(buf[main_index])){
-			//printf("pw mezera\n");
-			if (word_index){ /*delka slova neni nula*/
-				word[word_index]='\0'; /*ukoncim slovo*/
-				//sem_wait(&sem);
-//				hashset_add(set, (void *)word, word_index,&sem);
-//                                pthread_spin_lock(&sem);
-				slova.insert((char*) word);
-//                                pthread_spin_unlock(&sem);
-				//sem_post(&sem);				
-				chars+=delete_word(buf, *first, main_index-1, buf_size);
-				//printf("pw slovo= %s\n",word);
-				word_index=0;
-			}
-			buf[main_index]='\0';
-			/* v pripade, ze koncim mezerou musim dalsi 
-			first index nastavit manualne protoze 
-			jinak by ukazoval na zacatek posledniho
-			- jiz smazaneho slova*/
-			*first=(main_index+1)%buf_size; 
-			chars++;
-		}else{	
-			/*prvni pismeno noveho slova*/
-			if (!word_index) *first = main_index;
-			//printf("pw znak=%c\n",buf[main_index]);
-			word[word_index]=buf[main_index];
-			word_index++;
-		}
-		main_index++;
-		main_index%=buf_size;
-	}
-pthread_spin_unlock(&sem);
-	return chars;
 }
