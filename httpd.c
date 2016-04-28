@@ -36,7 +36,7 @@ static void sent_OK(int client);
 pthread_spinlock_t sem;
 pthread_spinlock_t mutex;
 std::queue<int> myqueue;
-#define MY_CPU_COUNT 7
+#define MY_CPU_COUNT 6
 #define IN_BUF_LEN 16*1024*1024
 
 pthread_t tid[MY_CPU_COUNT];          //identifikator vlakna
@@ -52,7 +52,6 @@ int get;
  * Parameters: the socket connected to the client */
 /**********************************************************************/
 #define PACKET 1500
-#define DECOMP_BUF_SIZE 50000
 static void * accept_request(void *  param){
  	char buf[1024];
 	char buf2[1024];
@@ -66,9 +65,7 @@ static void * accept_request(void *  param){
 	int length=0;	
 	char data_buf[PACKET];
 	int len;
-	int pred_infl;
         int terminate = 0;
-	int dekomprimovano;
 	int prijato;
 	int client;
         char * velky_buffer = (char*) param;
@@ -100,8 +97,6 @@ while(!terminate){
 	l=0;
 	length=0;
 	len=0; 
-	pred_infl=0;
-	dekomprimovano=0;
 	prijato=0;
         z_stream strm;
 
@@ -166,8 +161,9 @@ while(!terminate){
 
 		inflateInit2(&strm,15 | 32);
 
-                int celkem = 0;
-
+		strm.avail_out = IN_BUF_LEN;
+		strm.next_out = (unsigned char*)velky_buffer;
+			
 		while (length){
 			//bajty, ktere chci precist
 			len = PACKET < length ? PACKET : length; 
@@ -175,20 +171,14 @@ while(!terminate){
 			length-=prijato;
 
 			strm.avail_in = prijato; //pocet bajtu k dekompresi
-			strm.avail_out = IN_BUF_LEN-celkem;
-			strm.next_out = (unsigned char*)velky_buffer+celkem; //&velky_buffer[celkem]
 			strm.next_in = (unsigned char*)data_buf;	
 
-			/* updates next_in, avail_in, next_out, avail_out */	
-			pred_infl = strm.avail_out;
-
 			inflate(&strm, Z_SYNC_FLUSH); 
-			dekomprimovano = pred_infl-strm.avail_out;
-			
-                        celkem += dekomprimovano;
 		}
+
+		inflateEnd(&strm);
 		
-        velky_buffer[celkem] = '\0';
+        velky_buffer[IN_BUF_LEN-strm.avail_out] = '\0';
         char *string, *save = NULL;
 
 	pthread_spin_lock(&sem);
@@ -198,10 +188,7 @@ while(!terminate){
 		string = strtok_r(NULL,delimit,&save);
         }
 	pthread_spin_unlock(&sem);
-        
-        
-	//	printf("koncim vlakno\n");
-		inflateEnd(&strm);
+       
 
 		sent_OK(client); /*pokud tohle neodeslu pred zavrenim, klient
 				si zahlasi :empty response: */
