@@ -1,17 +1,3 @@
-/* J. David's webserver */
-/* This is a simple webserver.
- * Created November 1999 by J. David Blackstone.
- * CSE 4344 (Network concepts), Prof. Zeigler
- * University of Texas at Arlington
- */
-/* This program compiles for Sparc Solaris 2.6.
- * To compile for Linux:
- *  1) Comment out the #include <pthread.h> line.
- *  2) Comment out the line that defines the variable newthread.
- *  3) Comment out the two lines that run pthread_create().
- *  4) Uncomment the line that runs accept_request().
- *  5) Remove -lsocket from the Makefile.
- */
 #include <stdio.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -29,24 +15,13 @@
 #include <semaphore.h>
 #include <iostream>       // std::cout
 #include <queue>          // std::queue:
-//#include "hashset.h"
 
 #include <unordered_set>
 #include <iostream>
 
-#define TABLE (16777216*2)
-//#define TABLE 7
-
 #define ISspace(x) isspace((int)(x))
 
 #define SERVER_STRING "Server: jdbhttpd/0.1.0\r\n"
-
-//#define DEBUG
-
-struct parametry{
-        int client;
-//	hashset_t set;
-};
 
 static std::unordered_set<std::string> slova;
 
@@ -61,14 +36,15 @@ static void sent_OK(int client);
 pthread_spinlock_t sem;
 pthread_spinlock_t mutex;
 std::queue<int> myqueue;
-#define MY_CPU_COUNT 6
+#define MY_CPU_COUNT 7
+#define IN_BUF_LEN 16*1024*1024
+
 pthread_t tid[MY_CPU_COUNT];          //identifikator vlakna
 pthread_attr_t attr[MY_CPU_COUNT];    //atributy vlakna
 cpu_set_t cpus[MY_CPU_COUNT];
-int get =0;
+char buffer_recv[MY_CPU_COUNT][IN_BUF_LEN];
 
-char buffer_recv[MY_CPU_COUNT][32*1024*1024];
-
+int get;
 
 /**********************************************************************/
 /* A request has caused a call to accept() on the server port to
@@ -98,15 +74,13 @@ static void * accept_request(void *  param){
         char * velky_buffer = (char*) param;
         static char delimit[]=" \n\r\t";
 	
-	//printf("vlakno bezi\n");
-
+	//printf("vlakno %d bezi\n",(int)param);
 
 while(!terminate){
 	pthread_spin_lock(&mutex);
 	if (myqueue.empty()){
 		if (get){
 			pthread_spin_unlock(&mutex);
-//			printf("vlakno konci\n");
 			pthread_exit(0);
 		}else{
 			pthread_spin_unlock(&mutex);
@@ -134,9 +108,6 @@ while(!terminate){
 
 
  	numchars=get_line(client, buf, sizeof(buf)); /* POST /osp/myserver/data HTTP/1.1 */
-
-	i=0;	
-	j=0;
 
  	while (!ISspace(buf[j]) && (i < sizeof(method) - 1)){
   		method[i] = buf[j];
@@ -204,7 +175,7 @@ while(!terminate){
 			length-=prijato;
 
 			strm.avail_in = prijato; //pocet bajtu k dekompresi
-			strm.avail_out = 32*1024*1024-celkem;
+			strm.avail_out = IN_BUF_LEN-celkem;
 			strm.next_out = (unsigned char*)velky_buffer+celkem; //&velky_buffer[celkem]
 			strm.next_in = (unsigned char*)data_buf;	
 
@@ -220,13 +191,14 @@ while(!terminate){
         velky_buffer[celkem] = '\0';
         char *string, *save = NULL;
 
-        pthread_spin_lock(&sem);
+	pthread_spin_lock(&sem);
         string = strtok_r(velky_buffer,delimit,&save);
-        while (string != NULL) {
-            slova.insert(std::string(string));
-            string = strtok_r(NULL,delimit,&save);
+        while (string != NULL) {		
+		slova.insert(std::string(string));		
+		string = strtok_r(NULL,delimit,&save);
         }
-        pthread_spin_unlock(&sem);
+	pthread_spin_unlock(&sem);
+        
         
 	//	printf("koncim vlakno\n");
 		inflateEnd(&strm);
@@ -241,8 +213,8 @@ while(!terminate){
 		if (!strcmp(url,"/osp/myserver/count")){
 //			printf("cekam na vlakna\n");
 			get=1;
-			for (int ind=1;ind<MY_CPU_COUNT;ind++){
-				if (pthread_self()!=tid[ind]) pthread_join(tid[ind], NULL);
+			for (int i=0;i<MY_CPU_COUNT-1;i++){
+				if (pthread_self()!=tid[i]) pthread_join(tid[i], NULL);
 			}
 			sent_count(client,/* hashset_num_items(set)*/ slova.size());
 			slova.clear();
@@ -252,7 +224,7 @@ while(!terminate){
 			/*TODO */
 			
 
-			for (int i=1;i<MY_CPU_COUNT;i++){
+			for (int i=0;i<MY_CPU_COUNT-1;i++){
 				pthread_create(&tid[i], &attr[i],accept_request, &buffer_recv[i][0]);
 			}			
 			pthread_spin_unlock(&mutex);			
@@ -437,13 +409,15 @@ int main(void){
  	struct sockaddr_in client_name;
  	int client_name_len = sizeof(client_name);
 
+	get = 0;
+
 	pthread_spin_init(&sem, PTHREAD_PROCESS_PRIVATE);
 	pthread_spin_init(&mutex, PTHREAD_PROCESS_PRIVATE);
 	
  	server_sock = startup(&port);
  	printf("httpd running on port %d\n", port);
 
-	for (int i=0;i<MY_CPU_COUNT;i++){
+	for (int i=0;i<MY_CPU_COUNT-1;i++){
 		pthread_attr_init(&attr[i]);
 	}
 	for (int i=0;i<MY_CPU_COUNT;i++){
@@ -451,13 +425,13 @@ int main(void){
 		CPU_SET(i, &cpus[i]);
 	}
 	
-	pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpus[0]);
+	pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpus[MY_CPU_COUNT-1]);
 	
-	for (int i=1;i<MY_CPU_COUNT;i++){
+	for (int i=0;i<MY_CPU_COUNT-1;i++){
 		pthread_attr_setaffinity_np(&attr[i], sizeof(cpu_set_t), &cpus[i]);
 	}
 
-	for (int i=1;i<MY_CPU_COUNT;i++){
+	for (int i=0;i<MY_CPU_COUNT-1;i++){
 		pthread_create(&tid[i], &attr[i],accept_request, &buffer_recv[i][0]);
 	}
 	
