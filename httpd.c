@@ -29,7 +29,6 @@ static void * accept_request(void*);
 static void error_die(const char *);
 static int get_line(int, char *, int);
 static int startup(u_short *);
-static void unimplemented(int);
 static void sent_count(int client, int count);
 static void sent_OK(int client);
 
@@ -55,13 +54,10 @@ int get;
 static void * accept_request(void *  param){
  	char buf[1024];
 	char buf2[1024];
- 	char method[255];
- 	char url[255];
-	char path[512];
+ 	char method[64];
 	int numchars;
  	size_t i, j;
 	unsigned char k,l;
-	struct stat st;
 	int length=0;	
 	char data_buf[PACKET];
 	int len;
@@ -71,7 +67,6 @@ static void * accept_request(void *  param){
         char * velky_buffer = (char*) param;
         static char delimit[]=" \n\r\t";
 	
-	//printf("vlakno %d bezi\n",(int)param);
 
 while(!terminate){
 	pthread_spin_lock(&mutex);
@@ -111,37 +106,10 @@ while(!terminate){
  	}
  	method[i] = '\0';
 
- 	if (strcasecmp(method, "GET") && strcasecmp(method, "POST")){
-  		unimplemented(client);
-  		close(client);
-		continue;
-		
- 	}
- 	
-	/* preskocime mezery */
-	while (ISspace(buf[j]) && (j < sizeof(buf))){
-		j++;
-	}
-
-	/* URL pozadavku - resource */
-	i = 0; 	
-	while (!ISspace(buf[j]) && (i < sizeof(url) - 1) && (j < sizeof(buf))){
-		url[i] = buf[j];
-		i++;
-		j++;
-	}
-	url[i] = '\0';
-
 	if (strcasecmp(method, "POST") == 0){
-		/* chybny resource*/
-		if (strcmp(url,"/osp/myserver/data")){
- 			close(client);
-			continue;
-		}
 		k=0;
 		while(1){
 			get_line(client, buf2, sizeof(buf2));
-		//	printf("%d. lajna hlavicky = %s",k,buf2);
 			/*newlajna pred prilohou*/
 			if (buf2[0]=='\n'){
 				break;
@@ -203,7 +171,6 @@ while(!terminate){
         		}
 			pthread_spin_unlock(&sem);
        		}	
-		//printf("za vkladanim\n");
 
 		sent_OK(client); /*pokud tohle neodeslu pred zavrenim, klient
 				si zahlasi :empty response: */
@@ -212,8 +179,7 @@ while(!terminate){
 	}
 
 	if (strcasecmp(method, "GET") == 0){
-		if (!strcmp(url,"/osp/myserver/count")){
-//			printf("cekam na vlakna\n");
+
 			get=1;
 			for (int i=0;i<MY_CPU_COUNT-1;i++){
 				if (pthread_self()!=tid[i]) pthread_join(tid[i], NULL);
@@ -231,14 +197,10 @@ while(!terminate){
 			}			
 			pthread_spin_unlock(&mutex);			
 			terminate = 1;
-		}
  	}
 
-	        if (stat(path, &st) == -1) {
                 while ((numchars > 0) && strcmp("\n", buf)) { /* read & discard headers */
                         numchars = get_line(client, buf, sizeof(buf));
-                }
-                //not_found(client);
         }
 	
  	close(client);
@@ -373,33 +335,6 @@ static int startup(u_short *port)
  if (listen(httpd, 5) < 0)
   error_die("listen");
  return(httpd);
-}
-
-/**********************************************************************/
-/* Inform the client that the requested web method has not been
- * implemented.
- * Parameter: the client socket */
-/**********************************************************************/
-static void unimplemented(int client)
-{
- char buf[1024];
-
- sprintf(buf, "HTTP/1.0 501 Method Not Implemented\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, SERVER_STRING);
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "Content-Type: text/html\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "<HTML><HEAD><TITLE>Method Not Implemented\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "</TITLE></HEAD>\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "<BODY><P>HTTP request method not supported.\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "</BODY></HTML>\r\n");
- send(client, buf, strlen(buf), 0);
 }
 
 /**********************************************************************/
