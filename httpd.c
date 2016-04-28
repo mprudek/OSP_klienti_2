@@ -50,35 +50,24 @@ struct parametry{
 
 static std::unordered_set<std::string> slova;
 
-void * accept_request(void*);
-void bad_request(int);
-void cat(int, FILE *);
-void cannot_execute(int);
-void error_die(const char *);
-void execute_cgi(int, const char *, const char *, const char *);
-int get_line(int, char *, int);
-void headers(int, const char *);
-void not_found(int);
-void serve_file(int, const char *);
-int startup(u_short *);
-void unimplemented(int);
-void sent_count(int client, int count);
-void sent_OK(int client);
-int inf(const void *src, int srcLen, void *dst, int dstLen) ;
-int parse_words(char * buf, int* first, int buf_size);
-//hashset_t set;
-//sem_t sem;
+static void * accept_request(void*);
+static void error_die(const char *);
+static int get_line(int, char *, int);
+static int startup(u_short *);
+static void unimplemented(int);
+static void sent_count(int client, int count);
+static void sent_OK(int client);
+
 pthread_spinlock_t sem;
 pthread_spinlock_t mutex;
 std::queue<int> myqueue;
-#define CPU_COUNT 12
-pthread_t tid[CPU_COUNT];          //identifikator vlakna
-//pthread_mutex_t mutex;
-pthread_attr_t attr[CPU_COUNT];    //atributy vlakna
-cpu_set_t cpus[CPU_COUNT];
+#define MY_CPU_COUNT 6
+pthread_t tid[MY_CPU_COUNT];          //identifikator vlakna
+pthread_attr_t attr[MY_CPU_COUNT];    //atributy vlakna
+cpu_set_t cpus[MY_CPU_COUNT];
 int get =0;
 
-char buffer_recv[CPU_COUNT][32*1024*1024];
+char buffer_recv[MY_CPU_COUNT][32*1024*1024];
 
 
 /**********************************************************************/
@@ -91,7 +80,6 @@ char buffer_recv[CPU_COUNT][32*1024*1024];
 static void * accept_request(void *  param){
  	char buf[1024];
 	char buf2[1024];
-	char decomp[DECOMP_BUF_SIZE]={'k'};
  	char method[255];
  	char url[255];
 	char path[512];
@@ -102,17 +90,11 @@ static void * accept_request(void *  param){
 	int length=0;	
 	char data_buf[PACKET];
 	int len;
-	//z_stream strm  = {0};
-	int next_word;
-	int out_space; 
 	int pred_infl;
         int terminate = 0;
 	int dekomprimovano;
-	int index_decomp;
 	int prijato;
-	char zlib_out[DECOMP_BUF_SIZE];
 	int client;
-	void * retval;
         char * velky_buffer = (char*) param;
         static char delimit[]=" \n\r\t";
 	
@@ -135,29 +117,23 @@ while(!terminate){
 		myqueue.pop();
 		pthread_spin_unlock(&mutex);
 	}
-//	printf("vlakno spojeni=%d\n",client);
-		
-	
 
+		
 	numchars=0;
  	i=0;
 	j=0;
 	k=0;
 	l=0;
 	length=0;
-	len=0;
-	next_word=0;
-	out_space=0; 
+	len=0; 
 	pred_infl=0;
 	dekomprimovano=0;
-	index_decomp=0;
 	prijato=0;
-        z_stream strm  = {0};
+        z_stream strm;
 
 
 
  	numchars=get_line(client, buf, sizeof(buf)); /* POST /osp/myserver/data HTTP/1.1 */
-//	printf("head=%s\n",buf);
 
 	i=0;	
 	j=0;
@@ -216,21 +192,11 @@ while(!terminate){
 			}
 			k++;
 		}
-	//	printf("komprimovano=%d\n",length);
 
 		inflateInit2(&strm,15 | 32);
 
-		//strm.next_in = (unsigned char*)data_buf;
-		//strm.avail_out = 5*1024*1024;
-		//strm.next_out = (unsigned char*)zlib_out; //adresa prvnoho byte pro dekomp data
-
-		next_word = 0;
-		index_decomp = 0;
                 int celkem = 0;
 
-		/* DEKOMPRESE - TODO kontrolovat, zda si neprepisuju stara data  */
-		/* zatim doufam, ze delka vystupnihu bufferu je dostatecne velkym*/
-		/* nasobkem delky vstupniho bufferu 				 */
 		while (length){
 			//bajty, ktere chci precist
 			len = PACKET < length ? PACKET : length; 
@@ -249,20 +215,8 @@ while(!terminate){
 			dekomprimovano = pred_infl-strm.avail_out;
 			
                         celkem += dekomprimovano;
-
-			
-			//print_decomp(decomp, index_decomp, dekomprimovano,DECOMP_BUF_SIZE );
-			//printf("dekopmrimovano=%d celkem=%d\n",dekomprimovano,celkem);
-
-//			
-			//printf("outer space po parse=%d\n",out_space);	
 		}
-//               std::cout << "total out " << strm.total_out << "\n";
-//               std::cout << "celkem " << celkem << "\n";
-//               std::cout << "length " << length << "\n";
-
 		
-		//parse_words(decomp,&next_word,DECOMP_BUF_SIZE);
         velky_buffer[celkem] = '\0';
         char *string, *save = NULL;
 
@@ -270,7 +224,6 @@ while(!terminate){
         string = strtok_r(velky_buffer,delimit,&save);
         while (string != NULL) {
             slova.insert(std::string(string));
-//            std::cout << "adding |" << string << "|\n";
             string = strtok_r(NULL,delimit,&save);
         }
         pthread_spin_unlock(&sem);
@@ -288,8 +241,8 @@ while(!terminate){
 		if (!strcmp(url,"/osp/myserver/count")){
 //			printf("cekam na vlakna\n");
 			get=1;
-			for (int ind=1;i<CPU_COUNT;i++){
-				if (pthread_self()!=tid[i]) pthread_join(tid[i], NULL);
+			for (int ind=1;ind<MY_CPU_COUNT;ind++){
+				if (pthread_self()!=tid[ind]) pthread_join(tid[ind], NULL);
 			}
 			sent_count(client,/* hashset_num_items(set)*/ slova.size());
 			slova.clear();
@@ -299,7 +252,7 @@ while(!terminate){
 			/*TODO */
 			
 
-			for (int i=1;i<CPU_COUNT;i++){
+			for (int i=1;i<MY_CPU_COUNT;i++){
 				pthread_create(&tid[i], &attr[i],accept_request, &buffer_recv[i][0]);
 			}			
 			pthread_spin_unlock(&mutex);			
@@ -317,7 +270,7 @@ while(!terminate){
  	close(client);
 	continue;
 }
-
+	return NULL;
 }
 
 
@@ -490,21 +443,21 @@ int main(void){
  	server_sock = startup(&port);
  	printf("httpd running on port %d\n", port);
 
-	for (int i=0;i<CPU_COUNT;i++){
+	for (int i=0;i<MY_CPU_COUNT;i++){
 		pthread_attr_init(&attr[i]);
 	}
-	for (int i=0;i<CPU_COUNT;i++){
+	for (int i=0;i<MY_CPU_COUNT;i++){
 		CPU_ZERO(&cpus[i]);
 		CPU_SET(i, &cpus[i]);
 	}
 	
 	pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpus[0]);
 	
-	for (int i=1;i<CPU_COUNT;i++){
+	for (int i=1;i<MY_CPU_COUNT;i++){
 		pthread_attr_setaffinity_np(&attr[i], sizeof(cpu_set_t), &cpus[i]);
 	}
 
-	for (int i=1;i<CPU_COUNT;i++){
+	for (int i=1;i<MY_CPU_COUNT;i++){
 		pthread_create(&tid[i], &attr[i],accept_request, &buffer_recv[i][0]);
 	}
 	
