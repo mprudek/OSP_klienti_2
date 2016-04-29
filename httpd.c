@@ -35,7 +35,7 @@ static void sent_OK(int client);
 pthread_spinlock_t sem;
 pthread_spinlock_t mutex;
 std::queue<int> myqueue;
-#define MY_CPU_COUNT 7
+#define MY_CPU_COUNT 5
 #define IN_BUF_LEN 16*1024*1024
 
 pthread_t tid[MY_CPU_COUNT];          //identifikator vlakna
@@ -54,8 +54,6 @@ int get;
 static void * accept_request(void *  param){
  	char buf[1024];
 	char buf2[1024];
- 	char method[64];
-	int numchars;
  	size_t i, j;
 	unsigned char k,l;
 	int length=0;	
@@ -85,7 +83,6 @@ while(!terminate){
 	}
 
 		
-	numchars=0;
  	i=0;
 	j=0;
 	k=0;
@@ -97,16 +94,10 @@ while(!terminate){
 
 
 
- 	numchars=get_line(client, buf, sizeof(buf)); /* POST /osp/myserver/data HTTP/1.1 */
+ 	get_line(client, buf, sizeof(buf)); /* POST /osp/myserver/data HTTP/1.1 */
 
- 	while (!ISspace(buf[j]) && (i < sizeof(method) - 1)){
-  		method[i] = buf[j];
-  		i++;
-		j++;
- 	}
- 	method[i] = '\0';
-
-	if (strcasecmp(method, "POST") == 0){
+	/*post*/
+	if (buf[0]=='P'){
 		k=0;
 		while(1){
 			get_line(client, buf2, sizeof(buf2));
@@ -148,7 +139,7 @@ while(!terminate){
 		
         	velky_buffer[IN_BUF_LEN-strm.avail_out] = '\0';
 
-		#define SLOVA 250
+		#define SLOVA 500 
         	char *string[SLOVA], *save = NULL;
 		int count=SLOVA;
 		int all= 0;
@@ -178,35 +169,30 @@ while(!terminate){
 		continue;
 	}
 
-	if (strcasecmp(method, "GET") == 0){
+	if (buf[0]=='G'){
+		get=1;
+		for (int i=0;i<MY_CPU_COUNT-1;i++){
+			if (pthread_self()!=tid[i]) pthread_join(tid[i], NULL);
+		}
+		sent_count(client,/* hashset_num_items(set)*/ slova.size());
+		slova.clear();
+		pthread_spin_lock(&mutex);			
+		get=0;
+		/*TODO */
 
-			get=1;
-			for (int i=0;i<MY_CPU_COUNT-1;i++){
-				if (pthread_self()!=tid[i]) pthread_join(tid[i], NULL);
-			}
-			sent_count(client,/* hashset_num_items(set)*/ slova.size());
-			slova.clear();
-			pthread_spin_lock(&mutex);			
-			get=0;
-			
-			/*TODO */
-			
-
-			for (int i=0;i<MY_CPU_COUNT-1;i++){
-				pthread_create(&tid[i], &attr[i],accept_request, &buffer_recv[i][0]);
-			}			
-			pthread_spin_unlock(&mutex);			
-			terminate = 1;
+		for (int i=0;i<MY_CPU_COUNT-1;i++){
+			pthread_create(&tid[i], &attr[i],accept_request, &buffer_recv[i][0]);
+		}			
+		pthread_spin_unlock(&mutex);			
+		terminate = 1;
  	}
-
-                while ((numchars > 0) && strcmp("\n", buf)) { /* read & discard headers */
-                        numchars = get_line(client, buf, sizeof(buf));
-        }
+	
+	while ((get_line(client, buf, sizeof(buf))) && buf[0]!='\n');  
 	
  	close(client);
 	continue;
 }
-	return NULL;
+return NULL;
 }
 
 
@@ -234,36 +220,20 @@ static void error_die(const char *sc)
  *             the size of the buffer
  * Returns: the number of bytes stored (excluding null) */
 /**********************************************************************/
-static int get_line(int sock, char *buf, int size)
-{
- int i = 0;
- char c = '\0';
- int n;
+static int get_line(int sock, char *buf, int size){
+	char c = '\0';
+	int i;
 
- while ((i < size - 1) && (c != '\n'))
- {
-  n = recv(sock, &c, 1, 0);
-  /* DEBUG printf("%02X\n", c); */
-  if (n > 0)
-  {
-   if (c == '\r')
-   {
-    n = recv(sock, &c, 1, MSG_PEEK);
-    /* DEBUG printf("%02X\n", c); */
-    if ((n > 0) && (c == '\n'))
-     recv(sock, &c, 1, 0);
-    else
-     c = '\n';
-   }
-   buf[i] = c;
-   i++;
-  }
-  else
-   c = '\n';
- }
- buf[i] = '\0';
- 
- return(i);
+	for (i=0;i<size-1;i++){
+  		if (recv(sock, &buf[i], 1, 0)){
+   			if (buf[i] == '\r'){
+    				recv(sock, &buf[i], 1, 0);
+				break;    			
+   			}
+  		} else break;
+ 	}
+	buf[i+1] = '\0';
+ 	return i;
 }
 
 /**********************************************************************/
@@ -311,30 +281,25 @@ static void sent_OK(int client){
  * Parameters: pointer to variable containing the port to connect on
  * Returns: the socket */
 /**********************************************************************/
-static int startup(u_short *port)
-{
- int httpd = 0;
- struct sockaddr_in name;
+static int startup(u_short *port){
+ 	int httpd = 0;
+ 	struct sockaddr_in name;
 
- httpd = socket(PF_INET, SOCK_STREAM, 0);
- if (httpd == -1)
-  error_die("socket");
- memset(&name, 0, sizeof(name));
- name.sin_family = AF_INET;
- name.sin_port = htons(*port);
- name.sin_addr.s_addr = htonl(INADDR_ANY);
- if (bind(httpd, (struct sockaddr *)&name, sizeof(name)) < 0)
-  error_die("bind");
- if (*port == 0)  /* if dynamically allocating a port */
- {
-  int namelen = sizeof(name);
-  if (getsockname(httpd, (struct sockaddr *)&name, &namelen) == -1)
-   error_die("getsockname");
-  *port = ntohs(name.sin_port);
- }
- if (listen(httpd, 5) < 0)
-  error_die("listen");
- return(httpd);
+ 	httpd = socket(AF_INET, SOCK_STREAM, 0);
+ 	if (httpd == -1){
+  		error_die("socket");
+	}
+ 	memset(&name, 0, sizeof(name));
+ 	name.sin_family = AF_INET;
+ 	name.sin_port = htons(*port);
+ 	name.sin_addr.s_addr = htonl(INADDR_ANY);
+ 	if (bind(httpd, (struct sockaddr *)&name, sizeof(name)) < 0){
+  		error_die("bind");
+	}
+ 	if (listen(httpd, MY_CPU_COUNT) < 0){
+  		error_die("listen");
+	}
+ 	return(httpd);
 }
 
 /**********************************************************************/
