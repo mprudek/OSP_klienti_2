@@ -14,6 +14,7 @@
 #include <pthread.h>
 #include <iostream>       // std::cout
 #include <queue>          // std::queue:
+#include <limits.h>
 
 #include <unordered_set>
 #include <iostream>
@@ -22,7 +23,7 @@
 
 #define SERVER_STRING "Server: jdbhttpd/0.1.0\r\n"
 
-static std::unordered_set<std::string> slova;
+//static std::unordered_set<std::string> slova;
 
 static void * accept_request(void*);
 static void error_die(const char *);
@@ -30,19 +31,29 @@ static int get_line(int, char *, int);
 static int startup(u_short *);
 static void sent_count(int client, int count);
 static void sent_OK(int client);
+static unsigned hash(char *str);
+static unsigned hash2(char *str);
 
 pthread_spinlock_t spin_hash;
 pthread_spinlock_t spin_fronta;
 std::queue<int> myqueue;
 #define MY_CPU_COUNT 5
 #define IN_BUF_LEN 16*1024*1024
+#define LIST 4
+#define HASH_TABLE (256*1024*1024)
+#define HT_TYPE int
 
 pthread_t tid[MY_CPU_COUNT];          //identifikator vlakna
 pthread_attr_t attr[MY_CPU_COUNT];    //atributy vlakna
 cpu_set_t cpus[MY_CPU_COUNT];
 char buffer_recv[MY_CPU_COUNT][IN_BUF_LEN];
 
+HT_TYPE hash_table[HASH_TABLE];
+int count_words;
+
 int get;
+
+
 
 /**********************************************************************/
 /* A request has caused a call to accept() on the server port to
@@ -113,23 +124,30 @@ while(1){
         	velky_buffer[IN_BUF_LEN-strm.avail_out] = '\0';
 
 		#define SLOVA 256 
-        	char *string[SLOVA], *save = NULL;
+        	char  *string,*save = NULL;
+		long int hash_arr[SLOVA];
+		long int hash_arr2[SLOVA];		
 		int count=SLOVA;
 		int all= 0;
 		int i = 1;
-		string[0] = strtok_r(velky_buffer,delimit,&save);
+		string = strtok_r(velky_buffer,delimit,&save);
+		hash_arr[0] = hash(string);	
+		hash_arr2[0] = hash2(string);	
 		while (!all){
 			for (;i<SLOVA;i++){
-				string[i] = strtok_r(NULL,delimit,&save);
-				if (string[i]==NULL){
+				string = strtok_r(NULL,delimit,&save);
+				if (string==NULL){
 					count=i;
 					all=1;
 					break;
 				}	
+				hash_arr[i] = hash(string);
+				hash_arr2[i] = hash2(string);
 			}
 			pthread_spin_lock(&spin_hash);
-			for (i=0;i<count;i++){        		
-				slova.insert(std::string(string[i]));		
+			for (i=0;i<count;i++){        			
+				count_words+=!(hash_table[hash_arr[i]]==hash_arr2[i]);
+				hash_table[hash_arr[i]]=hash_arr2[i];	
         		}
 			pthread_spin_unlock(&spin_hash);
 			i = 0;
@@ -144,9 +162,9 @@ while(1){
 		for (int i=0;i<MY_CPU_COUNT-1;i++){
 			if (pthread_self()!=tid[i]) pthread_join(tid[i], NULL);
 		}
-		sent_count(client,/* hashset_num_items(set)*/ slova.size());
-		slova.clear();
-		//pthread_spin_lock(&mutex);			
+		sent_count(client,count_words);
+		count_words=0;
+		memset(hash_table,0,sizeof(HT_TYPE)*HASH_TABLE);			
 		get=0;
 		/*TODO */
 
@@ -161,6 +179,26 @@ while(1){
  	}
 }
 return NULL;
+}
+/*****************************************************************************/
+static unsigned hash(char *str){
+        unsigned hash = 5381;
+        int i=0;
+
+	while (str[i]!='\0'){
+            hash = ((hash << 5) + hash) + str[i++]; /* hash * 33 + c */
+	}
+        return hash % HASH_TABLE;
+}
+/*****************************************************************************/
+static unsigned hash2(char *str){
+        unsigned hash = 5381;
+        int i=0;
+
+	while (str[i]!='\0'){
+            hash = hash * 33 + str[i++]; 
+	}
+        return hash % INT_MAX;
 }
 
 
@@ -279,6 +317,8 @@ int main(void){
  	int client_name_len = sizeof(client_name);
 
 	get = 0;
+	count_words = 0;
+	memset(hash_table,0,sizeof(HT_TYPE)*HASH_TABLE);
 
 	pthread_spin_init(&spin_hash, PTHREAD_PROCESS_PRIVATE);
 	pthread_spin_init(&spin_fronta, PTHREAD_PROCESS_PRIVATE);
