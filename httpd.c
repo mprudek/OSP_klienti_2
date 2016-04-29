@@ -51,8 +51,7 @@ int get;
 /**********************************************************************/
 #define PACKET 1500
 static void * accept_request(void *  param){
-	char buf[1024];
-	char buf2[1024];	
+	char buf[1024];	
 	char data_buf[PACKET];
         char * velky_buffer = (char*) param;
         static char delimit[]=" \n\r\t";
@@ -84,26 +83,13 @@ while(1){
 
 	/*post*/
 	if (buf[0]=='P'){
-		unsigned char k=0;
-		while(1){
-			get_line(client, buf2, sizeof(buf2));
-			/*newlajna pred prilohou*/
-			if (buf2[0]=='\n'){
-				break;
-			}
-			/* delka prilohy je ve 4. lajne hlavicky*/
-			if (buf2[8]=='L'){
-				unsigned char l=16; /*delka prilohy je na 16 pozici*/
-				while (buf2[l]!='\n' && buf2[l]!='\r' 
-					&& buf2[l]!='\0' ){
-
-					length*=10;
-					length+=buf2[l]-48;
-					l++;
-				}	
-			}
-			k++;
+		while ((get_line(client, buf, sizeof(buf))) && buf[0]!='\n'){
+			if (buf[8]=='L'){
+				length = atoi(&buf[16]);
+				break;					
+			}	
 		}
+		while ((get_line(client, buf, sizeof(buf))) && buf[0]!='\n');
 
 		inflateInit2(&strm,15 | 32);
 
@@ -126,7 +112,7 @@ while(1){
 		
         	velky_buffer[IN_BUF_LEN-strm.avail_out] = '\0';
 
-		#define SLOVA 512 
+		#define SLOVA 256 
         	char *string[SLOVA], *save = NULL;
 		int count=SLOVA;
 		int all= 0;
@@ -153,9 +139,7 @@ while(1){
 				si zahlasi :empty response: */
  		close(client);
 		continue;
-	}
-
-	if (buf[0]=='G'){
+	}else{ /*GET*/
 		get=1;
 		for (int i=0;i<MY_CPU_COUNT-1;i++){
 			if (pthread_self()!=tid[i]) pthread_join(tid[i], NULL);
