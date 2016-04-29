@@ -12,7 +12,6 @@
 #include <stdlib.h>
 #include <zlib.h>
 #include <pthread.h>
-#include <semaphore.h>
 #include <iostream>       // std::cout
 #include <queue>          // std::queue:
 
@@ -32,8 +31,8 @@ static int startup(u_short *);
 static void sent_count(int client, int count);
 static void sent_OK(int client);
 
-pthread_spinlock_t sem;
-pthread_spinlock_t mutex;
+pthread_spinlock_t spin_hash;
+pthread_spinlock_t spin_fronta;
 std::queue<int> myqueue;
 #define MY_CPU_COUNT 5
 #define IN_BUF_LEN 16*1024*1024
@@ -52,53 +51,41 @@ int get;
 /**********************************************************************/
 #define PACKET 1500
 static void * accept_request(void *  param){
- 	char buf[1024];
-	char buf2[1024];
- 	size_t i, j;
-	unsigned char k,l;
-	int length=0;	
+	char buf[1024];
+	char buf2[1024];	
 	char data_buf[PACKET];
-	int len;
         int terminate = 0;
-	int prijato;
-	int client;
         char * velky_buffer = (char*) param;
         static char delimit[]=" \n\r\t";
 	
 
 while(!terminate){
-	pthread_spin_lock(&mutex);
+	int client;
+	pthread_spin_lock(&spin_fronta);
 	if (myqueue.empty()){
 		if (get){
-			pthread_spin_unlock(&mutex);
+			pthread_spin_unlock(&spin_fronta);
 			pthread_exit(0);
 		}else{
-			pthread_spin_unlock(&mutex);
+			pthread_spin_unlock(&spin_fronta);
 		 	continue;
 		}
 	}else{
 		client=myqueue.front();
 		myqueue.pop();
-		pthread_spin_unlock(&mutex);
+		pthread_spin_unlock(&spin_fronta);
 	}
-
 		
- 	i=0;
-	j=0;
-	k=0;
-	l=0;
-	length=0;
-	len=0; 
-	prijato=0;
+	int length=0;
+	int len=0; 
+	int prijato=0;
         z_stream strm;
-
-
 
  	get_line(client, buf, sizeof(buf)); /* POST /osp/myserver/data HTTP/1.1 */
 
 	/*post*/
 	if (buf[0]=='P'){
-		k=0;
+		unsigned char k=0;
 		while(1){
 			get_line(client, buf2, sizeof(buf2));
 			/*newlajna pred prilohou*/
@@ -107,9 +94,10 @@ while(!terminate){
 			}
 			/* delka prilohy je ve 4. lajne hlavicky*/
 			if (buf2[8]=='L'){
-				l=16; /*delka prilohy je na 16 pozici*/
+				unsigned char l=16; /*delka prilohy je na 16 pozici*/
 				while (buf2[l]!='\n' && buf2[l]!='\r' 
-						&& buf2[l]!='\0' ){
+					&& buf2[l]!='\0' ){
+
 					length*=10;
 					length+=buf2[l]-48;
 					l++;
@@ -144,9 +132,9 @@ while(!terminate){
 		int count=SLOVA;
 		int all= 0;
 		string[0] = strtok_r(velky_buffer,delimit,&save);
-		pthread_spin_lock(&sem);
+		pthread_spin_lock(&spin_hash);
 		slova.insert(std::string(string[0]));		
-        	pthread_spin_unlock(&sem);
+        	pthread_spin_unlock(&spin_hash);
 		while (!all){
 			for (int i=0;i<SLOVA;i++){
 				string[i] = strtok_r(NULL,delimit,&save);
@@ -156,11 +144,11 @@ while(!terminate){
 					break;
 				}	
 			}
-			pthread_spin_lock(&sem);
+			pthread_spin_lock(&spin_hash);
 			for (int i=0;i<count;i++){        		
 				slova.insert(std::string(string[i]));		
         		}
-			pthread_spin_unlock(&sem);
+			pthread_spin_unlock(&spin_hash);
        		}	
 
 		sent_OK(client); /*pokud tohle neodeslu pred zavrenim, klient
@@ -176,14 +164,14 @@ while(!terminate){
 		}
 		sent_count(client,/* hashset_num_items(set)*/ slova.size());
 		slova.clear();
-		pthread_spin_lock(&mutex);			
+		//pthread_spin_lock(&mutex);			
 		get=0;
 		/*TODO */
 
 		for (int i=0;i<MY_CPU_COUNT-1;i++){
 			pthread_create(&tid[i], &attr[i],accept_request, &buffer_recv[i][0]);
 		}			
-		pthread_spin_unlock(&mutex);			
+		//pthread_spin_unlock(&mutex);			
 		terminate = 1;
  	}
 	
@@ -221,7 +209,6 @@ static void error_die(const char *sc)
  * Returns: the number of bytes stored (excluding null) */
 /**********************************************************************/
 static int get_line(int sock, char *buf, int size){
-	char c = '\0';
 	int i;
 
 	for (i=0;i<size-1;i++){
@@ -313,8 +300,8 @@ int main(void){
 
 	get = 0;
 
-	pthread_spin_init(&sem, PTHREAD_PROCESS_PRIVATE);
-	pthread_spin_init(&mutex, PTHREAD_PROCESS_PRIVATE);
+	pthread_spin_init(&spin_hash, PTHREAD_PROCESS_PRIVATE);
+	pthread_spin_init(&spin_fronta, PTHREAD_PROCESS_PRIVATE);
 	
  	server_sock = startup(&port);
  	printf("httpd running on port %d\n", port);
@@ -341,16 +328,13 @@ int main(void){
   		client_sock = accept(server_sock,
                        (struct sockaddr *)&client_name,
                        &client_name_len);
-  		if (client_sock == -1){
-   			error_die("accept");
-		}
-		pthread_spin_lock(&mutex);
+		pthread_spin_lock(&spin_fronta);
 		myqueue.push(client_sock);
-		pthread_spin_unlock(&mutex);
+		pthread_spin_unlock(&spin_fronta);
 		
  	}
-	pthread_spin_destroy(&mutex);
-	pthread_spin_destroy(&sem);
+	pthread_spin_destroy(&spin_fronta);
+	pthread_spin_destroy(&spin_hash);
 
  	close(server_sock);
 	return(0);
