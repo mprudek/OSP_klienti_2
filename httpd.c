@@ -54,12 +54,11 @@ static void * accept_request(void *  param){
 	char buf[1024];
 	char buf2[1024];	
 	char data_buf[PACKET];
-        int terminate = 0;
         char * velky_buffer = (char*) param;
         static char delimit[]=" \n\r\t";
 	
 
-while(!terminate){
+while(1){
 	int client;
 	pthread_spin_lock(&spin_fronta);
 	if (myqueue.empty()){
@@ -127,16 +126,14 @@ while(!terminate){
 		
         	velky_buffer[IN_BUF_LEN-strm.avail_out] = '\0';
 
-		#define SLOVA 500 
+		#define SLOVA 512 
         	char *string[SLOVA], *save = NULL;
 		int count=SLOVA;
 		int all= 0;
+		int i = 1;
 		string[0] = strtok_r(velky_buffer,delimit,&save);
-		pthread_spin_lock(&spin_hash);
-		slova.insert(std::string(string[0]));		
-        	pthread_spin_unlock(&spin_hash);
 		while (!all){
-			for (int i=0;i<SLOVA;i++){
+			for (;i<SLOVA;i++){
 				string[i] = strtok_r(NULL,delimit,&save);
 				if (string[i]==NULL){
 					count=i;
@@ -145,10 +142,11 @@ while(!terminate){
 				}	
 			}
 			pthread_spin_lock(&spin_hash);
-			for (int i=0;i<count;i++){        		
+			for (i=0;i<count;i++){        		
 				slova.insert(std::string(string[i]));		
         		}
 			pthread_spin_unlock(&spin_hash);
+			i = 0;
        		}	
 
 		sent_OK(client); /*pokud tohle neodeslu pred zavrenim, klient
@@ -172,13 +170,11 @@ while(!terminate){
 			pthread_create(&tid[i], &attr[i],accept_request, &buffer_recv[i][0]);
 		}			
 		//pthread_spin_unlock(&mutex);			
-		terminate = 1;
+		
+		while ((get_line(client, buf, sizeof(buf))) && buf[0]!='\n');  
+ 		close(client);
+		return NULL;
  	}
-	
-	while ((get_line(client, buf, sizeof(buf))) && buf[0]!='\n');  
-	
- 	close(client);
-	continue;
 }
 return NULL;
 }
