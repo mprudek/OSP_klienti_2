@@ -26,7 +26,6 @@ static int startup(u_short *);
 static void sent_count(int client, int count);
 static void sent_OK(int client);
 static unsigned hash(char *str);
-static char * strcpy2(char * dest, char * src);
 
 pthread_spinlock_t spin_hash;
 pthread_spinlock_t spin_fronta;
@@ -143,8 +142,8 @@ while(1){
 			for (i=0;i<count;i++){     
 				/* hash nepouzit */
 				if (hash_table[hash_arr[i]]==0){
-					hash_table[hash_arr[i]]=word_end;	
-					word_end=strcpy2(word_end+8,string[i]);
+					hash_table[hash_arr[i]]=word_end;
+					word_end=stpcpy(word_end+8,string[i])+1;
 					count_words++;
 				}else{	
 					ulozene_slovo = hash_table[hash_arr[i]];
@@ -159,9 +158,10 @@ while(1){
 							if (*(char**)ulozene_slovo){
 								ulozene_slovo=*(char**)ulozene_slovo;
 								continue;
+							/* slova se shoduji - jsem na konci */
 							}else{	
 								*((char**)ulozene_slovo)=word_end;
-								word_end=strcpy2(word_end+8,string[i]);
+								word_end=stpcpy(word_end+8,string[i])+1;								
 								count_words++;
 								break;
 							}	
@@ -201,17 +201,6 @@ while(1){
 }
 return NULL;
 }
-/******************************************************************************/
-/*Prekopiruje strin az do \0 a vrati pointe na dalsi volny znak               */
-/******************************************************************************/
-static char * strcpy2(char * dest, char * src){
-	int i=0;
-	do{
-		dest[i]=src[i];
-	}while(src[i++]!='\0');
-	return &dest[i];
-}
- 
 /*****************************************************************************/
 static unsigned hash(char *str){
         unsigned hash = 5381;
