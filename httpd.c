@@ -12,8 +12,8 @@
 #include <stdlib.h>
 #include <zlib.h>
 #include <pthread.h>
-#include <iostream>       // std::cout
-#include <queue>          // std::queue:
+//#include <iostream>       // std::cout
+//#include <queue>          // std::queue:
 #include <limits.h>
 #include <sys/mman.h>
 
@@ -29,12 +29,12 @@ static unsigned hash(char *str);
 
 pthread_spinlock_t spin_hash;
 pthread_spinlock_t spin_fronta;
-std::queue<int> myqueue;
 #define MY_CPU_COUNT 7
 #define IN_BUF_LEN (16*1024*1024)
 #define HASH_TABLE (128*1024*1024)
 #define WORD_SPACE (64*1024*1024)
 #define HT_TYPE char*
+#define MAX_CONN (1024)
 
 pthread_t tid[MY_CPU_COUNT];          //identifikator vlakna
 pthread_attr_t attr[MY_CPU_COUNT];    //atributy vlakna
@@ -45,6 +45,8 @@ char buffer_recv[MY_CPU_COUNT][IN_BUF_LEN];
 /* hashem) [char] (samotne slovo zakoncene '\0')*/
 char word_space[WORD_SPACE];
 char *word_end;
+int connections[MAX_CONN];
+int con_ind, con_count;
 
 HT_TYPE hash_table[HASH_TABLE];
 int count_words;
@@ -66,7 +68,7 @@ static void * accept_request(void *  param){
 while(1){
 	int client;
 	pthread_spin_lock(&spin_fronta);
-	if (myqueue.empty()){
+	if (con_ind==con_count){
 		if (get){
 			pthread_spin_unlock(&spin_fronta);
 			pthread_exit(0);
@@ -75,8 +77,7 @@ while(1){
 		 	continue;
 		}
 	}else{
-		client=myqueue.front();
-		myqueue.pop();
+		client=connections[con_ind++];
 		pthread_spin_unlock(&spin_fronta);
 	}
 		
@@ -182,20 +183,22 @@ while(1){
 		for (int i=0;i<MY_CPU_COUNT-1;i++){
 			if (pthread_self()!=tid[i]) pthread_join(tid[i], NULL);
 		}
-		sent_count(client,count_words);		
+		sent_count(client,count_words);
+		while ((get_line(client, buf, sizeof(buf))) && buf[0]!='\n');  
+ 		close(client);		
 		get = 0;
 		count_words = 0;
 		memset(hash_table,0,sizeof(HT_TYPE)*HASH_TABLE);
 		memset(word_space,0,WORD_SPACE);
 		word_end = word_space;
+		con_count = 0;
+		con_ind = 0;
 		/*TODO */
 
 		for (int i=0;i<MY_CPU_COUNT-1;i++){
 			pthread_create(&tid[i], &attr[i],accept_request, &buffer_recv[i][0]);
 		}						
 		
-		while ((get_line(client, buf, sizeof(buf))) && buf[0]!='\n');  
- 		close(client);
 		return NULL;
  	}
 }
@@ -207,7 +210,8 @@ static unsigned hash(char *str){
         int i=0;
 
 	while (str[i]!='\0'){
-            hash = ((hash << 5) + hash) + str[i++]; /* hash * 33 + c */
+            	/*hash = ((hash << 5) + hash) + str[i++]; */
+		hash = hash * 33 + str[i++];
 	}
         return hash % HASH_TABLE;
 }
@@ -329,6 +333,8 @@ int main(void){
 	memset(hash_table,0,sizeof(HT_TYPE)*HASH_TABLE);
 	memset(word_space,0,WORD_SPACE);
 	word_end = word_space;
+	con_count = 0;
+	con_ind = 0;
 
 	pthread_spin_init(&spin_hash, PTHREAD_PROCESS_PRIVATE);
 	pthread_spin_init(&spin_fronta, PTHREAD_PROCESS_PRIVATE);
@@ -359,7 +365,7 @@ int main(void){
                        (struct sockaddr *)&client_name,
                        &client_name_len);
 		pthread_spin_lock(&spin_fronta);
-		myqueue.push(client_sock);
+		connections[con_count++]=client_sock;
 		pthread_spin_unlock(&spin_fronta);
 		
  	}
