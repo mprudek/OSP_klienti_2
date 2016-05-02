@@ -16,14 +16,7 @@
 #include <queue>          // std::queue:
 #include <limits.h>
 
-#include <unordered_set>
-#include <iostream>
-
-#define ISspace(x) isspace((int)(x))
-
 #define SERVER_STRING "Server: jdbhttpd/0.1.0\r\n"
-
-//static std::unordered_set<std::string> slova;
 
 static void * accept_request(void*);
 static void error_die(const char *);
@@ -32,28 +25,30 @@ static int startup(u_short *);
 static void sent_count(int client, int count);
 static void sent_OK(int client);
 static unsigned hash(char *str);
-static unsigned hash2(char *str);
+static char * strcpy2(char * dest, char * src);
 
 pthread_spinlock_t spin_hash;
 pthread_spinlock_t spin_fronta;
 std::queue<int> myqueue;
-#define MY_CPU_COUNT 5
-#define IN_BUF_LEN 16*1024*1024
-#define LIST 4
-#define HASH_TABLE (256*1024*1024)
-#define HT_TYPE int
+#define MY_CPU_COUNT 6
+#define IN_BUF_LEN (16*1024*1024)
+#define HASH_TABLE (128*1024*1024)
+#define WORD_SPACE (64*1024*1024)
+#define HT_TYPE char*
 
 pthread_t tid[MY_CPU_COUNT];          //identifikator vlakna
 pthread_attr_t attr[MY_CPU_COUNT];    //atributy vlakna
 cpu_set_t cpus[MY_CPU_COUNT];
 char buffer_recv[MY_CPU_COUNT][IN_BUF_LEN];
+/*word_space*/
+/*obsahuje data ve formatu: [(char*)] (pointer na stejny format dat se stejnym*/
+/* hashem) [char] (samotne slovo zakoncene '\0')*/
+char word_space[WORD_SPACE];
+char *word_end;
 
 HT_TYPE hash_table[HASH_TABLE];
 int count_words;
-
 int get;
-
-
 
 /**********************************************************************/
 /* A request has caused a call to accept() on the server port to
@@ -124,30 +119,54 @@ while(1){
         	velky_buffer[IN_BUF_LEN-strm.avail_out] = '\0';
 
 		#define SLOVA 256 
-        	char  *string,*save = NULL;
-		long int hash_arr[SLOVA];
-		long int hash_arr2[SLOVA];		
+        	char  *string[SLOVA],*save = NULL;
+		char * ulozene_slovo; /*na 0 pozici je (char*), na 8. pozici zacina (char) */
+		unsigned hash_arr[SLOVA];		
 		int count=SLOVA;
 		int all= 0;
 		int i = 1;
-		string = strtok_r(velky_buffer,delimit,&save);
-		hash_arr[0] = hash(string);	
-		hash_arr2[0] = hash2(string);	
+		string[0] = strtok_r(velky_buffer,delimit,&save);
+		hash_arr[0] = hash(string[0]);		
 		while (!all){
 			for (;i<SLOVA;i++){
-				string = strtok_r(NULL,delimit,&save);
-				if (string==NULL){
+				string[i] = strtok_r(NULL,delimit,&save);
+				if (string[i]==NULL){
 					count=i;
 					all=1;
 					break;
 				}	
-				hash_arr[i] = hash(string);
-				hash_arr2[i] = hash2(string);
+				hash_arr[i] = hash(string[i]);
 			}
 			pthread_spin_lock(&spin_hash);
-			for (i=0;i<count;i++){        			
-				count_words+=!(hash_table[hash_arr[i]]==hash_arr2[i]);
-				hash_table[hash_arr[i]]=hash_arr2[i];	
+			/* iteruji po slovech */
+			for (i=0;i<count;i++){     
+				/* hash nepouzit */
+				if (hash_table[hash_arr[i]]==0){
+					hash_table[hash_arr[i]]=word_end;	
+					word_end=strcpy2(word_end+8,string[i]);
+					count_words++;
+				}else{	
+					ulozene_slovo = hash_table[hash_arr[i]];
+					while(1){
+
+						/* nasel jsem shodu v celem slove */					
+						if (!strcmp(string[i],&ulozene_slovo[8])){
+							break;
+						/* slova se neshoduji */
+						}else{
+							/* slova se neshoduji a nejsem na konci*/
+							if (*(char**)ulozene_slovo){
+								ulozene_slovo=*(char**)ulozene_slovo;
+								continue;
+							}else{	
+								*((char**)ulozene_slovo)=word_end;
+								word_end=strcpy2(word_end+8,string[i]);
+								count_words++;
+								break;
+							}	
+						}
+					}
+				}	
         		}
 			pthread_spin_unlock(&spin_hash);
 			i = 0;
@@ -162,16 +181,17 @@ while(1){
 		for (int i=0;i<MY_CPU_COUNT-1;i++){
 			if (pthread_self()!=tid[i]) pthread_join(tid[i], NULL);
 		}
-		sent_count(client,count_words);
-		count_words=0;
-		memset(hash_table,0,sizeof(HT_TYPE)*HASH_TABLE);			
-		get=0;
+		sent_count(client,count_words);		
+		get = 0;
+		count_words = 0;
+		memset(hash_table,0,sizeof(HT_TYPE)*HASH_TABLE);
+		memset(word_space,0,WORD_SPACE);
+		word_end = word_space;
 		/*TODO */
 
 		for (int i=0;i<MY_CPU_COUNT-1;i++){
 			pthread_create(&tid[i], &attr[i],accept_request, &buffer_recv[i][0]);
-		}			
-		//pthread_spin_unlock(&mutex);			
+		}						
 		
 		while ((get_line(client, buf, sizeof(buf))) && buf[0]!='\n');  
  		close(client);
@@ -180,6 +200,17 @@ while(1){
 }
 return NULL;
 }
+/******************************************************************************/
+/*Prekopiruje strin az do \0 a vrati pointe na dalsi volny znak               */
+/******************************************************************************/
+static char * strcpy2(char * dest, char * src){
+	int i=0;
+	do{
+		dest[i]=src[i];
+	}while(src[i++]!='\0');
+	return &dest[i];
+}
+ 
 /*****************************************************************************/
 static unsigned hash(char *str){
         unsigned hash = 5381;
@@ -190,27 +221,15 @@ static unsigned hash(char *str){
 	}
         return hash % HASH_TABLE;
 }
-/*****************************************************************************/
-static unsigned hash2(char *str){
-        unsigned hash = 5381;
-        int i=0;
-
-	while (str[i]!='\0'){
-            hash = hash * 33 + str[i++]; 
-	}
-        return hash % INT_MAX;
-}
-
 
 /**********************************************************************/
 /* Print out an error message with perror() (for system errors; based
  * on value of errno, which indicates system call errors) and exit the
  * program indicating an error. */
 /**********************************************************************/
-static void error_die(const char *sc)
-{
- perror(sc);
- exit(1);
+static void error_die(const char *sc){
+ 	perror(sc);
+ 	exit(1);
 }
 
 /**********************************************************************/
@@ -276,8 +295,6 @@ static void sent_OK(int client){
  	send(client, buf, strlen(buf), 0);
 }
 
-
-
 /**********************************************************************/
 /* This function starts the process of listening for web connections
  * on a specified port.  If the port is 0, then dynamically allocate a
@@ -319,6 +336,8 @@ int main(void){
 	get = 0;
 	count_words = 0;
 	memset(hash_table,0,sizeof(HT_TYPE)*HASH_TABLE);
+	memset(word_space,0,WORD_SPACE);
+	word_end = word_space;
 
 	pthread_spin_init(&spin_hash, PTHREAD_PROCESS_PRIVATE);
 	pthread_spin_init(&spin_fronta, PTHREAD_PROCESS_PRIVATE);
