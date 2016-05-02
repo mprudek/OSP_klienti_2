@@ -1,50 +1,46 @@
-#include <stdio.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <ctype.h>
-#include <strings.h>
-#include <string.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 #include <zlib.h>
 #include <pthread.h>
-//#include <iostream>       // std::cout
-//#include <queue>          // std::queue:
-#include <limits.h>
 #include <sys/mman.h>
 
-#define SERVER_STRING "Server: jdbhttpd/0.1.0\r\n"
+#define SERVER_STRING "Server: PRUDEMAR\r\n"
 
-static void * accept_request(void*);
-static void error_die(const char *);
-static int get_line(int, char *, int);
-static int startup(u_short *);
-static void sent_count(int client, int count);
-static void sent_OK(int client);
-static unsigned hash(char *str);
-
-pthread_spinlock_t spin_hash;
-pthread_spinlock_t spin_fronta;
 #define MY_CPU_COUNT 7
 #define IN_BUF_LEN (16*1024*1024)
 #define HASH_TABLE (128*1024*1024)
 #define WORD_SPACE (64*1024*1024)
 #define HT_TYPE char*
 #define MAX_CONN (1024)
+#define SLOVA 256
+
+static void * accept_request(void*);
+static int get_line(int, char *, int);
+static int startup(unsigned short *);
+static void sent_count(int client, int count);
+static void sent_OK(int client);
+static unsigned hash(char *str);
+
+pthread_spinlock_t spin_hash;
+pthread_spinlock_t spin_fronta;
 
 pthread_t tid[MY_CPU_COUNT];          //identifikator vlakna
 pthread_attr_t attr[MY_CPU_COUNT];    //atributy vlakna
 cpu_set_t cpus[MY_CPU_COUNT];
 char buffer_recv[MY_CPU_COUNT][IN_BUF_LEN];
+
 /*word_space*/
 /*obsahuje data ve formatu: [(char*)] (pointer na stejny format dat se stejnym*/
 /* hashem) [char] (samotne slovo zakoncene '\0')*/
 char word_space[WORD_SPACE];
 char *word_end;
+
 int connections[MAX_CONN];
 int con_ind, con_count;
 
@@ -64,18 +60,15 @@ static void * accept_request(void *  param){
         char * velky_buffer = (char*) param;
         static char delimit[]=" \n\r\t";
 	
-
 while(1){
 	int client;
 	pthread_spin_lock(&spin_fronta);
 	if (con_ind==con_count){
+		pthread_spin_unlock(&spin_fronta);
 		if (get){
-			pthread_spin_unlock(&spin_fronta);
 			pthread_exit(0);
-		}else{
-			pthread_spin_unlock(&spin_fronta);
-		 	continue;
 		}
+		continue;
 	}else{
 		client=connections[con_ind++];
 		pthread_spin_unlock(&spin_fronta);
@@ -118,8 +111,7 @@ while(1){
 		inflateEnd(&strm);
 		
         	velky_buffer[IN_BUF_LEN-strm.avail_out] = '\0';
-
-		#define SLOVA 256 
+ 
         	char  *string[SLOVA],*save = NULL;
 		char * ulozene_slovo; /*na 0 pozici je (char*), na 8. pozici zacina (char) */
 		unsigned hash_arr[SLOVA];		
@@ -186,6 +178,7 @@ while(1){
 		sent_count(client,count_words);
 		while ((get_line(client, buf, sizeof(buf))) && buf[0]!='\n');  
  		close(client);		
+		
 		get = 0;
 		count_words = 0;
 		memset(hash_table,0,sizeof(HT_TYPE)*HASH_TABLE);
@@ -215,17 +208,6 @@ static unsigned hash(char *str){
 	}
         return hash % HASH_TABLE;
 }
-
-/**********************************************************************/
-/* Print out an error message with perror() (for system errors; based
- * on value of errno, which indicates system call errors) and exit the
- * program indicating an error. */
-/**********************************************************************/
-static void error_die(const char *sc){
- 	perror(sc);
- 	exit(1);
-}
-
 /**********************************************************************/
 /* Get a line from a socket, whether the line ends in a newline,
  * carriage return, or a CRLF combination.  Terminates the string read
@@ -297,23 +279,26 @@ static void sent_OK(int client){
  * Parameters: pointer to variable containing the port to connect on
  * Returns: the socket */
 /**********************************************************************/
-static int startup(u_short *port){
+static int startup(unsigned short *port){
  	int httpd = 0;
  	struct sockaddr_in name;
 
  	httpd = socket(AF_INET, SOCK_STREAM, 0);
  	if (httpd == -1){
-  		error_die("socket");
+  		perror("socket");
+ 		exit(1);
 	}
  	memset(&name, 0, sizeof(name));
  	name.sin_family = AF_INET;
  	name.sin_port = htons(*port);
  	name.sin_addr.s_addr = htonl(INADDR_ANY);
  	if (bind(httpd, (struct sockaddr *)&name, sizeof(name)) < 0){
-  		error_die("bind");
+  		perror("bind");
+ 		exit(1);
 	}
  	if (listen(httpd, MY_CPU_COUNT) < 0){
-  		error_die("listen");
+  		perror("listen");
+ 		exit(1);
 	}
  	return(httpd);
 }
@@ -322,10 +307,10 @@ static int startup(u_short *port){
 
 int main(void){
  	int server_sock = -1;
- 	u_short port = 8080;
+ 	unsigned short port = 8080;
  	int client_sock = -1;
  	struct sockaddr_in client_name;
- 	int client_name_len = sizeof(client_name);
+ 	socklen_t client_name_len = sizeof(client_name);
 
 	get = 0;
 	count_words = 0;
