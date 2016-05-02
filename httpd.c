@@ -15,6 +15,7 @@
 #include <iostream>       // std::cout
 #include <queue>          // std::queue:
 #include <limits.h>
+#include <sys/mman.h>
 
 #define SERVER_STRING "Server: jdbhttpd/0.1.0\r\n"
 
@@ -30,7 +31,7 @@ static char * strcpy2(char * dest, char * src);
 pthread_spinlock_t spin_hash;
 pthread_spinlock_t spin_fronta;
 std::queue<int> myqueue;
-#define MY_CPU_COUNT 6
+#define MY_CPU_COUNT 7
 #define IN_BUF_LEN (16*1024*1024)
 #define HASH_TABLE (128*1024*1024)
 #define WORD_SPACE (64*1024*1024)
@@ -335,6 +336,7 @@ int main(void){
 
 	get = 0;
 	count_words = 0;
+	mlockall(MCL_FUTURE | MCL_CURRENT);
 	memset(hash_table,0,sizeof(HT_TYPE)*HASH_TABLE);
 	memset(word_space,0,WORD_SPACE);
 	word_end = word_space;
